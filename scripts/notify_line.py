@@ -102,7 +102,17 @@ def build_message(data):
     design.sort(key=lambda case: (REGION_ORDER.index(case["r"]) if case["r"] in REGION_ORDER else 9, case["days_left"]))
     bubbles = [summary_bubble(data, cases)] + [case_bubble(case) for case in design[:MAX_CASE_CARDS]]
     alt = f"奈拾標案雷達 {data['g'][5:10].replace('-', '/')}：共 {len(cases)} 案，設計／統包 {len(design)} 案"
-    return {"type": "flex", "altText": alt, "contents": {"type": "carousel", "contents": bubbles}}
+    count = lambda fn: sum(1 for case in cases if fn(case))
+    share_text = "\n".join([
+        f"📋 奈拾標案雷達（{data['g'][5:10].replace('-', '/')} 更新）",
+        f"共 {len(cases)} 案：設計 {count(lambda c: c['y'] == '設計')}｜統包 {count(lambda c: c['y'] == '統包')}｜施工 {count(lambda c: c['y'] == '施工')}（南部 {count(lambda c: c['r'].startswith('南部'))}）",
+        "完整清單、分類與準備清單請點：",
+        PAGE_URL,
+    ])
+    return [
+        {"type": "flex", "altText": alt, "contents": {"type": "carousel", "contents": bubbles}},
+        {"type": "text", "text": share_text},
+    ]
 
 
 args = sys.argv[1:]
@@ -113,7 +123,7 @@ if "--dry-run" in args:
     sys.exit(0)
 
 target = args[args.index("--to") + 1] if "--to" in args else GROUP_ID
-body = json.dumps({"to": target, "messages": [message]}, ensure_ascii=False)
+body = json.dumps({"to": target, "messages": message}, ensure_ascii=False)
 result = subprocess.run(
     ["curl", "-sS", "-w", "\n%{http_code}", "-X", "POST", "https://api.line.me/v2/bot/message/push",
      "-H", "Content-Type: application/json", "--data-binary", "@-"],
