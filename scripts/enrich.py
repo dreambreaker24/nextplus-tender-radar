@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 TAIPEI = timezone(timedelta(hours=8))
 MIN_DAYS_LEFT = 4
+MAX_BUDGET_NON_DESIGN = 6_000_000
 
 TYPE_ORDER = ["設計", "統包", "施工"]
 REGION_ORDER = ["南部（台南）", "南部", "中部", "北部", "東部", "離島"]
@@ -93,6 +94,9 @@ def main(source_path, output_path):
         if case["days_left"] < MIN_DAYS_LEFT:
             continue
         case["type"] = case_type(case)
+        budget = re.sub(r"[^0-9]", "", case["budget"])
+        if case["type"] != "設計" and budget and int(budget) > MAX_BUDGET_NON_DESIGN:
+            continue
         case["region"] = region(case)
         case["checklist"] = checklist(case)
         kept.append(case)
