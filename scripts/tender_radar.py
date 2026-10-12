@@ -3,12 +3,10 @@ import re
 import sys
 import time
 import urllib.request
-import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 MCP_URL = "https://api.tobid.tw/mcp"
-OFFICIAL_URL = "https://api.tobid.tw/api/official"
 USER_AGENT = "NextplusTenderRadar/1.0 (+https://nextplus-design.com)"
 TAIPEI = timezone(timedelta(hours=8))
 LOOKBACK_DAYS = 30
@@ -51,21 +49,29 @@ def post_json(url, payload):
         return json.loads(response.read().decode("utf-8"))
 
 
-def get_json(url):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def search(keyword, page):
+def call_tool(name, arguments):
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
-        "params": {"name": "search_tenders", "arguments": {"q": keyword, "kind": "tender", "page": page}},
+        "params": {"name": name, "arguments": arguments},
     }
     result = post_json(MCP_URL, payload)
     return json.loads(result["result"]["content"][0]["text"])
+
+
+def search(keyword, page):
+    return call_tool("search_tenders", {"q": keyword, "kind": "tender", "page": page})
+
+
+def get_tender(unit_id, job_number):
+    # 還在招標的案子第一次查，ToBid 可能還沒備好明細或回「查太快」，等一下再查
+    for wait in [5, 15, 30, 60]:
+        tender = call_tool("get_tender", {"unit_id": unit_id, "job_number": job_number})
+        if tender.get("official_details") or "已決標" in tender.get("official_details_note", ""):
+            return tender
+        time.sleep(wait)
+    return tender
 
 
 def roc_to_datetime(text):
@@ -115,18 +121,21 @@ def collect():
 
     def build_case(item):
         (unit_id, job_number), row = item
-        query = urllib.parse.urlencode({"unit_id": unit_id, "job_number": job_number})
         try:
-            official = get_json(f"{OFFICIAL_URL}?{query}").get("all", {})
+            tender = get_tender(unit_id, job_number)
         except Exception as error:
             print("official fail", unit_id, job_number, error, file=sys.stderr)
             return None
-        deadline = roc_to_datetime(official.get("領投開標:截止投標", ""))
+        official = tender.get("official_details") or {}
+        if not official:
+            print("official fail", unit_id, job_number, tender.get("official_details_note", ""), file=sys.stderr)
+            return None
+        deadline = roc_to_datetime(official.get("截止投標", ""))
         if not deadline or deadline < now:
             return None
-        qualification = official.get("其他:廠商資格摘要", "")
+        qualification = official.get("廠商資格摘要", "")
         verdict, reason, flags = classify(qualification)
-        place = official.get("其他:履約地點", "")
+        place = official.get("履約地點", "")
         return {
             "title": row["title"],
             "unit_name": row["unit_name"],
@@ -135,31 +144,32 @@ def collect():
             "announce_date": row["date"],
             "deadline": deadline.strftime("%Y-%m-%d %H:%M"),
             "days_left": (deadline.date() - now.date()).days,
-            "budget": official.get("採購資料:預算金額", ""),
-            "category": official.get("採購資料:標的分類", ""),
-            "tender_method": official.get("招標資料:招標方式", ""),
-            "award_method": official.get("招標資料:決標方式", ""),
-            "design_build": official.get("招標資料:是否屬統包", ""),
-            "e_bid": official.get("領投開標:是否提供電子投標", ""),
-            "bid_bond": official.get("領投開標:是否須繳納押標金", ""),
-            "bid_bond_amount": official.get("領投開標:是否須繳納押標金:押標金額度", ""),
-            "performance_bond": official.get("領投開標:是否須繳納履約保證金", ""),
+            "budget": str(tender.get("budget") or ""),
+            "category": official.get("標的分類", ""),
+            "tender_method": official.get("招標方式", ""),
+            "award_method": official.get("決標方式", ""),
+            # ToBid get_tender 沒有以下四個欄位，統包改靠標題判斷
+            "design_build": "",
+            "e_bid": official.get("是否提供電子投標", ""),
+            "bid_bond": official.get("是否須繳納押標金", ""),
+            "bid_bond_amount": official.get("押標金額度", ""),
+            "performance_bond": "",
             "place": place,
             "south": any(city in place for city in SOUTH),
-            "period": official.get("其他:履約期限", ""),
+            "period": official.get("履約期限", ""),
             "qualification": qualification,
-            "capability_required": official.get("其他:是否訂有與履約能力有關之基本資格", ""),
-            "capability_detail": {k: v for k, v in official.items() if k.startswith("其他:是否訂有與履約能力有關之基本資格:")},
-            "extra_note": official.get("其他:附加說明", "")[:600],
-            "contact": official.get("機關資料:聯絡人", "") + " " + official.get("機關資料:聯絡電話", ""),
+            "capability_required": "",
+            "capability_detail": {},
+            "extra_note": "",
+            "contact": official.get("聯絡人", "") + " " + official.get("聯絡電話", ""),
             "verdict": verdict,
             "verdict_reason": reason,
             "flags": flags,
             "tobid_url": f"https://tobid.tw/?case={unit_id}|{job_number}",
-            "official_url": official.get("url", ""),
+            "official_url": tender.get("official_detail_url") or "",
         }
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         cases = [case for case in pool.map(build_case, candidates.items()) if case]
     return cases
 
