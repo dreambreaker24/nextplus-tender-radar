@@ -160,6 +160,12 @@ function checklist(item) {
     return rows;
 }
 
+// 公告詳細頁還沒有時，改連政府採購網「等標期內」用機關代碼＋案號搜尋，會列出最新一次公告
+function searchUrl(key) {
+    const [orgId, tenderId] = key.split("|");
+    return "https://web.pcc.gov.tw/prkms/tender/common/basic/readTenderBasic?pageSize=10&firstSearch=true&searchType=basic&isBinding=N&isLogIn=N&level_1=on&orgName=&tenderName=&tenderType=TENDER_DECLARATION&tenderWay=TENDER_WAY_ALL_DECLARATION&dateType=isSpdt&orgId=" + encodeURIComponent(orgId) + "&tenderId=" + encodeURIComponent(tenderId);
+}
+
 function expand(item, today) {
     const [year, month, day] = item.d.slice(0, 10).split("-").map(Number);
     return {
@@ -178,7 +184,8 @@ function expand(item, today) {
         checklist: checklist(item),
         command: `標案雷達 分析：${item.t}（${item.u}，ToBid 代碼 ${item.k}）`,
         tobid_url: "https://tobid.tw/?case=" + encodeURIComponent(item.k),
-        official_url: item.o ? "https://web.pcc.gov.tw/tps/QueryTender/query/searchTenderDetail?pkPmsMain=" + encodeURIComponent(item.o) : "",
+        official_url: item.o ? "https://web.pcc.gov.tw/tps/QueryTender/query/searchTenderDetail?pkPmsMain=" + encodeURIComponent(item.o) : searchUrl(item.k),
+        official_label: item.o ? "政府採購網公告（含廠商資格原文）" : "政府採購網搜尋（點「檢視」看公告）",
         days_left: Math.round((Date.UTC(year, month - 1, day) - today) / 86400000),
     };
 }
@@ -233,7 +240,7 @@ function card(item) {
         </div>
         <p class="reason">判斷依據：${escapeHtml(item.verdict_reason)}</p>
         <details><summary>準備清單（${item.checklist.length} 項）</summary><ul class="check">${checklist}</ul></details>
-        <div class="links"><button type="button" class="copy" data-command="${escapeHtml(item.command)}">複製分析指令</button><a href="${escapeHtml(item.tobid_url)}" target="_blank" rel="noopener">ToBid 行情與對手</a>${item.official_url ? `<a href="${escapeHtml(item.official_url)}" target="_blank" rel="noopener">政府採購網公告（含廠商資格原文）</a>` : ""}</div>
+        <div class="links"><button type="button" class="copy" data-command="${escapeHtml(item.command)}">複製分析指令</button><a href="${escapeHtml(item.tobid_url)}" target="_blank" rel="noopener">ToBid 行情與對手</a>${item.official_url ? `<a href="${escapeHtml(item.official_url)}" target="_blank" rel="noopener">${escapeHtml(item.official_label)}</a>` : ""}</div>
     </article>`;
 }
 
